@@ -130,4 +130,4 @@ MIT License
 
 ---
 
-Built by Philip Barongo Ondieki with love for farmers ❤️
+Built by Philip Barongo Ondieki with love for farmers ❤️# agri-ai-backend
