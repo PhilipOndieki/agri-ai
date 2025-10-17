@@ -47,7 +47,7 @@ const allowedOrigins = [
     'http://localhost:3000',
     'http://localhost:3001',
     process.env.FRONTEND_URL,
-    'https://agri-ai33.netlify.app/', // Replace with your actual Netlify URL
+    'https://agri-ai33.netlify.app', // Replace with your actual Netlify URL
 ].filter(Boolean); // Remove undefined values
 
 app.use(cors({
@@ -119,6 +119,196 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+// API Documentation endpoint
+app.get('/api/docs', (req, res) => {
+    res.json({
+        title: 'AgriAI API Documentation',
+        version: '1.0.0',
+        description: 'Smart Agriculture Platform with AI-powered crop disease detection, weather forecasting, and farming community features',
+        repository: 'https://github.com/PhilipOndieki/agri-ai.git',
+        baseUrl: `${req.protocol}://${req.get('host')}/api`,
+        endpoints: {
+            authentication: {
+                register: {
+                    method: 'POST',
+                    path: '/auth/register',
+                    description: 'Register a new user',
+                    body: {
+                        name: 'string (required)',
+                        email: 'string (required)',
+                        password: 'string (required)',
+                        phone: 'string (optional)',
+                        location: 'string (optional)'
+                    }
+                },
+                login: {
+                    method: 'POST',
+                    path: '/auth/login',
+                    description: 'Login user',
+                    body: {
+                        email: 'string (required)',
+                        password: 'string (required)'
+                    }
+                },
+                profile: {
+                    method: 'GET',
+                    path: '/auth/profile',
+                    description: 'Get user profile',
+                    auth: 'Bearer Token Required'
+                }
+            },
+            images: {
+                upload: {
+                    method: 'POST',
+                    path: '/images/upload',
+                    description: 'Upload crop image for analysis',
+                    auth: 'Bearer Token Required',
+                    contentType: 'multipart/form-data',
+                    body: {
+                        image: 'file (required)',
+                        cropType: 'string (optional)'
+                    }
+                },
+                list: {
+                    method: 'GET',
+                    path: '/images',
+                    description: 'Get user uploaded images',
+                    auth: 'Bearer Token Required'
+                },
+                delete: {
+                    method: 'DELETE',
+                    path: '/images/:id',
+                    description: 'Delete an image',
+                    auth: 'Bearer Token Required'
+                }
+            },
+            ai: {
+                analyze: {
+                    method: 'POST',
+                    path: '/ai/analyze',
+                    description: 'Analyze crop disease from image',
+                    auth: 'Bearer Token Required',
+                    body: {
+                        imageUrl: 'string (required)',
+                        cropType: 'string (optional)'
+                    }
+                },
+                recommendations: {
+                    method: 'POST',
+                    path: '/ai/recommendations',
+                    description: 'Get farming recommendations',
+                    auth: 'Bearer Token Required',
+                    body: {
+                        cropType: 'string (required)',
+                        location: 'string (optional)',
+                        season: 'string (optional)'
+                    }
+                }
+            },
+            chatbot: {
+                query: {
+                    method: 'POST',
+                    path: '/chatbot/query',
+                    description: 'Ask farming-related questions',
+                    auth: 'Bearer Token Required',
+                    body: {
+                        message: 'string (required)',
+                        context: 'object (optional)'
+                    }
+                },
+                history: {
+                    method: 'GET',
+                    path: '/chatbot/history',
+                    description: 'Get chat history',
+                    auth: 'Bearer Token Required'
+                }
+            },
+            weather: {
+                current: {
+                    method: 'GET',
+                    path: '/weather/current',
+                    description: 'Get current weather for location',
+                    auth: 'Bearer Token Required',
+                    query: {
+                        location: 'string (required)'
+                    }
+                },
+                forecast: {
+                    method: 'GET',
+                    path: '/weather/forecast',
+                    description: 'Get weather forecast',
+                    auth: 'Bearer Token Required',
+                    query: {
+                        location: 'string (required)',
+                        days: 'number (optional, default: 7)'
+                    }
+                }
+            },
+            community: {
+                posts: {
+                    create: {
+                        method: 'POST',
+                        path: '/community/posts',
+                        description: 'Create a community post',
+                        auth: 'Bearer Token Required'
+                    },
+                    list: {
+                        method: 'GET',
+                        path: '/community/posts',
+                        description: 'Get community posts',
+                        auth: 'Bearer Token Required'
+                    },
+                    like: {
+                        method: 'POST',
+                        path: '/community/posts/:id/like',
+                        description: 'Like a post',
+                        auth: 'Bearer Token Required'
+                    },
+                    comment: {
+                        method: 'POST',
+                        path: '/community/posts/:id/comment',
+                        description: 'Comment on a post',
+                        auth: 'Bearer Token Required'
+                    }
+                }
+            },
+            notifications: {
+                list: {
+                    method: 'GET',
+                    path: '/notifications',
+                    description: 'Get user notifications',
+                    auth: 'Bearer Token Required'
+                },
+                markRead: {
+                    method: 'PUT',
+                    path: '/notifications/:id/read',
+                    description: 'Mark notification as read',
+                    auth: 'Bearer Token Required'
+                }
+            }
+        },
+        authentication: {
+            type: 'Bearer Token',
+            header: 'Authorization: Bearer <token>',
+            description: 'Include the JWT token received from login in the Authorization header'
+        },
+        errorCodes: {
+            200: 'Success',
+            201: 'Created',
+            400: 'Bad Request',
+            401: 'Unauthorized',
+            403: 'Forbidden',
+            404: 'Not Found',
+            429: 'Too Many Requests',
+            500: 'Internal Server Error'
+        },
+        contact: {
+            github: 'https://github.com/PhilipOndieki/agri-ai',
+            issues: 'https://github.com/PhilipOndieki/agri-ai/issues'
+        }
+    });
+});
+
 // Root endpoint
 app.get('/', (req, res) => {
     res.json({
@@ -136,7 +326,7 @@ app.get('/', (req, res) => {
             notifications: '/api/notifications'
         },
         documentation: '/api/docs',
-        repository: 'https://github.com/yourusername/agriai-backend'
+        repository: 'https://github.com/PhilipOndieki/agri-ai.git'
     });
 });
 

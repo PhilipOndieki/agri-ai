@@ -31,7 +31,7 @@ const chatSessionSchema = new mongoose.Schema({
         metadata: {
             source: {
                 type: String,
-                enum: ['openai', 'local-knowledge', 'system'],
+                enum: ['gemini', 'local', 'openai', 'other', 'local-knowledge', 'system'],
                 default: 'system'
             },
             model: String,

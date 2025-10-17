@@ -1,0 +1,7 @@
+
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIzaSyB0jqNRACDxtKr9Tb8icDQhZtJPAOz3I4c" \
+  -H 'Content-Type: application/json' \
+  -d '{"contents":[{"parts":[{"text":"Hello"}]}]}'
+
+
+  curl "https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSyB0jqNRACDxtKr9Tb8icDQhZtJPAOz3I4c"

@@ -1,15 +1,16 @@
-// Chatbot Routes with OpenAI Integration
+// Chatbot Routes with Google Gemini Integration
 const express = require('express');
-const { OpenAI } = require('openai'); 
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const ChatSession = require('../models/ChatSession');
 const { auth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-});
+// Initialize Google Gemini client
+let genAI = null;
+if (process.env.GOOGLE_GEMINI_API_KEY) {
+    genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
+}
 
 // Agricultural knowledge base for fallback responses
 const AGRICULTURAL_KNOWLEDGE = {
@@ -76,14 +77,31 @@ const getFallbackResponse = (query) => {
     return "I'm here to help with farming questions! You can ask me about soil health, pest control, water management, crop selection, or weather conditions. What would you like to know?";
 };
 
+// @route   GET /api/chatbot/test
+// @desc    Test chatbot endpoint
+// @access  Private
+router.get('/test', auth, async (req, res) => {
+    res.json({
+        success: true,
+        message: 'Chatbot route is working!',
+        user: req.user._id,
+        geminiEnabled: !!genAI,
+        timestamp: new Date().toISOString()
+    });
+});
+
 // @route   POST /api/chatbot/chat
 // @desc    Send message to chatbot
 // @access  Private
 router.post('/chat', auth, async (req, res, next) => {
     try {
+        console.log('📨 Received chat request from user:', req.user._id);
+        console.log('📝 Request body:', req.body);
+
         const { message, sessionId, language = 'en' } = req.body;
 
         if (!message) {
+            console.log('❌ No message provided');
             return res.status(400).json({
                 success: false,
                 message: 'Message is required'
@@ -93,14 +111,24 @@ router.post('/chat', auth, async (req, res, next) => {
         // Find or create chat session
         let session;
         if (sessionId) {
-            session = await ChatSession.findById(sessionId);
+            console.log('🔍 Looking for session:', sessionId);
+            session = await ChatSession.findOne({
+                _id: sessionId,
+                user: req.user._id
+            });
+            console.log('📦 Found session:', session ? 'Yes' : 'No');
         }
         
         if (!session) {
+            console.log('🆕 Creating new session');
             session = await ChatSession.create({
                 user: req.user._id,
-                messages: []
+                messages: [],
+                settings: {
+                    language: language
+                }
             });
+            console.log('✅ New session created:', session._id);
         }
 
         // Add user message to session
@@ -111,39 +139,55 @@ router.post('/chat', auth, async (req, res, next) => {
         });
 
         let botResponse;
-        let responseSource = 'openai';
+        let responseSource = 'gemini';
 
         try {
-            // Try OpenAI first
-            if (process.env.OPENAI_API_KEY) {
-                const completion = await openai.chat.completions.create({
-                    model: "gpt-3.5-turbo",
-                    messages: [
+            // Try Google Gemini first
+            if (genAI) {
+                console.log('🤖 Calling Google Gemini API...');
+                
+                const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+                
+                // Build conversation history
+                const history = session.messages.slice(-10).map(msg => ({
+                    role: msg.role === 'assistant' ? 'model' : 'user',
+                    parts: [{ text: msg.content }]
+                }));
+
+                // Create system prompt
+                const systemPrompt = `You are an agricultural expert assistant. Provide helpful, accurate farming advice in ${language}. Be concise but informative (max 200 words). Focus on practical solutions that farmers can implement.`;
+
+                // Start chat with history
+                const chat = model.startChat({
+                    history: [
                         {
-                            role: "system",
-                            content: `You are an agricultural expert assistant. Provide helpful, accurate farming advice in ${language}. Be concise but informative. Focus on practical solutions that farmers can implement.`
+                            role: 'user',
+                            parts: [{ text: systemPrompt }]
                         },
-                        ...session.messages.slice(-10).map(msg => ({
-                            role: msg.role,
-                            content: msg.content
-                        })),
                         {
-                            role: "user",
-                            content: message
-                        }
+                            role: 'model',
+                            parts: [{ text: 'Understood. I will provide practical farming advice.' }]
+                        },
+                        ...history.slice(0, -1) // Exclude the last message we just added
                     ],
-                    max_tokens: 300,
-                    temperature: 0.7
+                    generationConfig: {
+                        maxOutputTokens: 300,
+                        temperature: 0.7,
+                    }
                 });
 
-                botResponse = completion.choices[0].message.content;
+                const result = await chat.sendMessage(message);
+                const response = await result.response;
+                botResponse = response.text();
+                console.log('✅ Gemini response received');
             } else {
+                console.log('⚠️ No Gemini API key, using fallback');
                 // Fallback to local knowledge base
                 botResponse = getFallbackResponse(message);
                 responseSource = 'local';
             }
-        } catch (openaiError) {
-            console.error('OpenAI error:', openaiError.message);
+        } catch (geminiError) {
+            console.error('❌ Gemini error:', geminiError.message);
             // Fallback to local knowledge base
             botResponse = getFallbackResponse(message);
             responseSource = 'local';
@@ -156,11 +200,12 @@ router.post('/chat', auth, async (req, res, next) => {
             timestamp: new Date(),
             metadata: {
                 source: responseSource,
-                model: responseSource === 'openai' ? 'gpt-3.5-turbo' : 'local-knowledge'
+                model: responseSource === 'gemini' ? 'gemini-2.0-flash' : 'local-knowledge'
             }
         });
 
         await session.save();
+        console.log('💾 Session saved successfully');
 
         res.json({
             success: true,
@@ -173,8 +218,18 @@ router.post('/chat', auth, async (req, res, next) => {
         });
 
     } catch (error) {
+        console.error('❌ Chat error:', error);
         next(error);
     }
+});
+
+// @route   POST /api/chatbot/query (Alternative endpoint)
+// @desc    Send message to chatbot (alternative route name)
+// @access  Private
+router.post('/query', auth, async (req, res, next) => {
+    // Just redirect to /chat endpoint
+    req.url = '/chat';
+    return router.handle(req, res, next);
 });
 
 // @route   GET /api/chatbot/sessions
@@ -429,5 +484,8 @@ router.get('/analytics', auth, async (req, res, next) => {
         next(error);
     }
 });
+
+console.log('✅ Chatbot routes loaded');
+console.log('🤖 Google Gemini:', genAI ? 'Enabled' : 'Disabled (using local fallback)');
 
 module.exports = router;
