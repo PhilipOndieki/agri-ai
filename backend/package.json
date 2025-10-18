@@ -23,6 +23,7 @@
   "license": "MIT",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@tensorflow-models/mobilenet": "^2.1.1",
     "@tensorflow/tfjs-node": "^4.15.0",
     "axios": "^1.6.2",
     "bcryptjs": "^2.4.3",

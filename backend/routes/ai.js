@@ -1,6 +1,7 @@
 // AI Analysis Routes
 const express = require('express');
 const tf = require('@tensorflow/tfjs-node');
+const mobilenet = require('@tensorflow-models/mobilenet'); 
 const path = require('path');
 const fs = require('fs');
 const ImageAnalysis = require('../models/ImageAnalysis');
@@ -17,14 +18,19 @@ const loadModel = async () => {
     
     modelLoading = true;
     try {
-        console.log('🤖 Loading TensorFlow model...');
-        // Load MobileNet model
-        model = await tf.loadLayersModel('https://storage.googleapis.com/tfjs-models/tfjs/mobilenet_v1_0.25_224/model.json');
-        console.log('✅ TensorFlow model loaded successfully');
+        console.log('🤖 Loading MobileNet model...');
+        
+        // Load MobileNet using the official package
+        model = await mobilenet.load({
+            version: 1,
+            alpha: 0.25, // Use lightweight version
+        });
+        
+        console.log('✅ MobileNet model loaded successfully');
         modelLoading = false;
         return model;
     } catch (error) {
-        console.error('❌ Failed to load TensorFlow model:', error);
+        console.error('❌ Failed to load MobileNet model:', error);
         modelLoading = false;
         throw error;
     }
@@ -49,7 +55,7 @@ const AGRICULTURAL_CLASSES = {
     'wet': ['wet', 'waterlogged', 'flooded', 'moist']
 };
 
-// Analyze image using TensorFlow
+// Analyze image using TensorFlow and MobileNet
 const analyzeImageWithAI = async (imagePath) => {
     try {
         // Load model if not already loaded
@@ -60,28 +66,24 @@ const analyzeImageWithAI = async (imagePath) => {
 
         // Load and preprocess image
         const imageBuffer = fs.readFileSync(imagePath);
-        const imageTensor = tf.node.decodeImage(imageBuffer);
+        const imageTensor = tf.node.decodeImage(imageBuffer, 3); // 3 channels (RGB)
         
-        // Resize to 224x224 for MobileNet
+        // MobileNet expects 224x224 images
         const resizedTensor = tf.image.resizeBilinear(imageTensor, [224, 224]);
         
-        // Normalize pixel values
-        const normalizedTensor = resizedTensor.div(255.0);
+        // Normalize to [-1, 1] for MobileNet
+        const normalizedTensor = resizedTensor.toFloat().div(127.5).sub(1.0);
         
         // Add batch dimension
         const batchedTensor = normalizedTensor.expandDims(0);
         
-        // Run prediction
-        const predictions = await model.predict(batchedTensor).data();
+        // Run prediction using MobileNet classify method
+        const predictions = await model.classify(batchedTensor);
         
-        // Get top predictions
-        const topPredictions = Array.from(predictions)
-            .map((probability, index) => ({ probability, index }))
-            .sort((a, b) => b.probability - a.probability)
-            .slice(0, 5);
-
+        console.log('🔍 MobileNet predictions:', predictions);
+        
         // Convert to agricultural analysis
-        const agriculturalAnalysis = convertToAgriculturalAnalysis(topPredictions);
+        const agriculturalAnalysis = convertToAgriculturalAnalysis(predictions);
         
         // Clean up tensors
         imageTensor.dispose();
@@ -98,85 +100,165 @@ const analyzeImageWithAI = async (imagePath) => {
 
 // Convert ImageNet predictions to agricultural analysis
 const convertToAgriculturalAnalysis = (predictions) => {
-    // Mock agricultural analysis based on predictions
-    // In a real implementation, you'd have a trained agricultural model
+    console.log('📊 Raw MobileNet predictions:', JSON.stringify(predictions, null, 2));
+    
+    // Ensure we have predictions
+    if (!predictions || predictions.length === 0) {
+        throw new Error('No predictions returned from model');
+    }
+    
+    // Extract top prediction
+    const topPrediction = predictions[0];
+    const className = topPrediction.className.toLowerCase();
+    const probability = topPrediction.probability;
+    
+    console.log('🎯 Top prediction:', className, 'confidence:', probability);
+    
+    // Detect crop type from predictions
+    let detectedCrop = 'Unknown Crop';
+    let isPlant = false;
+    
+    // Check if prediction matches agricultural keywords
+    for (const [crop, keywords] of Object.entries(AGRICULTURAL_CLASSES)) {
+        if (keywords.some(keyword => className.includes(keyword))) {
+            detectedCrop = crop.charAt(0).toUpperCase() + crop.slice(1);
+            isPlant = true;
+            console.log('✅ Matched crop:', detectedCrop);
+            break;
+        }
+    }
+    
+    // If not agricultural, check if it's plant-related
+    const plantKeywords = ['plant', 'leaf', 'flower', 'vegetable', 'fruit', 'crop', 'tree', 'grass', 'bush', 'vine', 'seed', 'root'];
+    if (!isPlant && plantKeywords.some(keyword => className.includes(keyword))) {
+        isPlant = true;
+        detectedCrop = className.split(',')[0].trim();
+        console.log('🌱 Plant-related detected:', detectedCrop);
+    }
+    
+    // Calculate health score based on prediction confidence and keywords
+    let healthScore = 70;
+    const healthKeywords = ['healthy', 'fresh', 'green', 'vibrant'];
+    const diseaseKeywords = ['diseased', 'infected', 'blight', 'rot', 'dead', 'withered', 'wilted', 'rust', 'mold'];
+    
+    if (healthKeywords.some(keyword => className.includes(keyword))) {
+        healthScore = Math.floor(85 + (probability * 15)); // 85-100
+    } else if (diseaseKeywords.some(keyword => className.includes(keyword))) {
+        healthScore = Math.floor(30 + (probability * 30)); // 30-60
+    } else {
+        healthScore = Math.floor(60 + (probability * 30)); // 60-90
+    }
+    
+    console.log('💚 Calculated health score:', healthScore);
+    
+    // Detect diseases
+    let diseaseDetected = diseaseKeywords.some(keyword => className.includes(keyword)) || healthScore < 60;
+    let diseaseName = '';
+    let symptoms = [];
+    let treatment = [];
+    let issues = [];
+    
+    if (diseaseDetected) {
+        diseaseName = 'Potential stress or disease detected';
+        symptoms = [
+            'Visual stress indicators present',
+            'Unusual coloration detected',
+            'Possible health decline'
+        ];
+        treatment = [
+            'Consult agricultural expert for proper diagnosis',
+            'Isolate affected plants if possible',
+            'Check environmental conditions (water, light, nutrients)',
+            'Consider appropriate treatment based on expert diagnosis',
+            'Monitor surrounding plants for similar symptoms'
+        ];
+        issues = ['Disease or stress indicators detected', 'Requires attention'];
+    }
+    
+    // Generate recommendations based on health score
+    let recommendations = [];
+    if (healthScore > 85) {
+        recommendations = [
+            'Excellent condition - maintain current practices',
+            'Document successful methods for future reference',
+            'Monitor regularly to catch early issues',
+            'Consider this as a baseline for comparison'
+        ];
+    } else if (healthScore > 70) {
+        recommendations = [
+            'Good overall health detected',
+            'Continue regular monitoring',
+            'Ensure consistent care schedule',
+            'Check soil moisture and nutrients periodically'
+        ];
+    } else if (healthScore > 50) {
+        recommendations = [
+            'Fair condition - increased monitoring recommended',
+            'Check for environmental stressors',
+            'Consider soil testing',
+            'Verify irrigation and drainage systems',
+            'Inspect for pest activity'
+        ];
+    } else {
+        recommendations = [
+            '⚠️ Poor condition - immediate attention needed',
+            'Consult agricultural expert urgently',
+            'Isolate plant if disease suspected',
+            'Review and adjust care practices immediately',
+            'Document symptoms for expert consultation'
+        ];
+    }
     
     const analysis = {
         cropAnalysis: {
-            detectedCrop: 'Unknown Crop',
-            healthScore: Math.floor(Math.random() * 40) + 60, // 60-100
-            condition: 'good',
-            issues: [],
-            recommendations: [
-                'Monitor crop regularly for signs of stress',
-                'Maintain proper irrigation schedule',
-                'Check soil nutrient levels'
-            ],
-            confidence: 0.75
+            detectedCrop: detectedCrop,
+            healthScore: healthScore,
+            condition: healthScore > 85 ? 'excellent' : healthScore > 70 ? 'good' : healthScore > 50 ? 'fair' : 'poor',
+            issues: issues,
+            recommendations: recommendations,
+            confidence: Math.round(probability * 100) / 100,
+            rawPredictions: predictions.slice(0, 3).map(p => ({
+                class: p.className,
+                probability: (p.probability * 100).toFixed(2) + '%'
+            }))
         },
         soilAnalysis: {
-            type: 'loamy',
-            moistureLevel: 'moist',
+            type: 'Visual analysis not available',
+            moistureLevel: 'Cannot determine from image',
             nutrientDeficiencies: [],
-            phEstimate: 6.5,
-            texture: 'Medium',
-            color: 'Dark brown',
-            organicMatter: 'Adequate'
+            phEstimate: null,
+            texture: 'Not detectable from image',
+            color: 'Requires physical soil sample',
+            organicMatter: 'Not detectable from image',
+            note: 'Soil analysis requires physical sample testing'
         },
         pestAnalysis: {
-            detected: false,
+            detected: diseaseDetected,
             pests: [],
             disease: {
-                detected: false,
-                name: '',
-                symptoms: [],
-                treatment: []
-            }
+                detected: diseaseDetected,
+                name: diseaseName,
+                symptoms: symptoms,
+                treatment: treatment
+            },
+            note: 'Detailed pest identification requires expert examination'
         },
         environmentalFactors: {
-            lighting: 'Adequate',
-            season: 'Growing season',
-            weatherConditions: 'Favorable',
-            irrigationStatus: 'Optimal'
+            lighting: 'Visible in image',
+            season: 'Cannot determine from single image',
+            weatherConditions: 'Cannot determine from image',
+            irrigationStatus: 'Not detectable from image',
+            note: 'Environmental factors require additional context'
         }
     };
-
-    // Simulate analysis based on random factors
-    const healthScore = Math.floor(Math.random() * 40) + 60;
-    analysis.cropAnalysis.healthScore = healthScore;
     
-    if (healthScore > 90) {
-        analysis.cropAnalysis.condition = 'excellent';
-        analysis.cropAnalysis.recommendations = [
-            'Excellent crop condition maintained',
-            'Continue current farming practices',
-            'Consider sharing success with community'
-        ];
-    } else if (healthScore > 75) {
-        analysis.cropAnalysis.condition = 'good';
-        analysis.cropAnalysis.recommendations = [
-            'Good overall condition',
-            'Monitor for any changes',
-            'Maintain regular care schedule'
-        ];
-    } else if (healthScore > 50) {
-        analysis.cropAnalysis.condition = 'fair';
-        analysis.cropAnalysis.issues = ['Minor stress indicators'];
-        analysis.cropAnalysis.recommendations = [
-            'Check irrigation system',
-            'Inspect for pests',
-            'Consider soil testing'
-        ];
-    } else {
-        analysis.cropAnalysis.condition = 'poor';
-        analysis.cropAnalysis.issues = ['Visible stress', 'Poor growth'];
-        analysis.cropAnalysis.recommendations = [
-            'Immediate attention required',
-            'Consult agricultural expert',
-            'Consider treatment options'
-        ];
-    }
-
+    console.log('✅ Analysis complete:', {
+        crop: detectedCrop,
+        health: healthScore,
+        diseaseDetected,
+        recommendationsCount: recommendations.length
+    });
+    
     return analysis;
 };
 
@@ -461,3 +543,4 @@ router.get('/analytics', auth, async (req, res, next) => {
 });
 
 module.exports = router;
+module.exports.analyzeImageWithAI = analyzeImageWithAI;

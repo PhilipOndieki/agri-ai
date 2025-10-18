@@ -4,6 +4,7 @@ const multer = require('multer');
 const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
+const { analyzeImageWithAI } = require('./ai');
 const ImageAnalysis = require('../models/ImageAnalysis');
 const { auth } = require('../middleware/auth');
 const User = require('../models/User');
@@ -110,17 +111,45 @@ router.post('/upload', auth, upload.single('image'), async (req, res, next) => {
             }
         });
 
+        // 🆕 TRIGGER ASYNC ANALYSIS (non-blocking)
+        setImmediate(async () => {
+            try {
+                console.log('🤖 Starting AI analysis for:', imageAnalysis._id);
+                imageAnalysis.status = 'processing';
+                await imageAnalysis.save();
+
+                const startTime = Date.now();
+                const analysis = await analyzeImageWithAI(imageAnalysis.originalImage.path);
+                const processingTime = (Date.now() - startTime) / 1000;
+
+                imageAnalysis.analysis = analysis;
+                imageAnalysis.processingTime = processingTime;
+                imageAnalysis.status = 'completed';
+                await imageAnalysis.save();
+
+                console.log('✅ AI analysis completed for:', imageAnalysis._id);
+            } catch (error) {
+                console.error('❌ AI analysis failed for:', imageAnalysis._id, error);
+                imageAnalysis.status = 'failed';
+                imageAnalysis.errorMessage = error.message;
+                await imageAnalysis.save();
+            }
+        });
+
+        // Return immediately with "processing" status
         res.json({
             success: true,
-            message: 'Image uploaded successfully',
+            message: 'Image uploaded successfully, analysis in progress',
             data: {
                 analysis: imageAnalysis,
                 analysisId: imageAnalysis._id,
                 imageUrl: imageAnalysis.originalImage.url,
-                status: imageAnalysis.status,
+                status: 'processing',
                 locationUsed: finalLocation.latitude ? 'provided' : 'not_available'
             }
         });
+
+
     } catch (error) {
         // Clean up uploaded file if error occurs
         if (req.file && fs.existsSync(req.file.path)) {
