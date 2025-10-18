@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const ImageAnalysis = require('../models/ImageAnalysis');
 const { auth } = require('../middleware/auth');
-
+const User = require('../models/User');
 const router = express.Router();
 
 // Configure multer storage
@@ -59,7 +59,37 @@ router.post('/upload', auth, upload.single('image'), async (req, res, next) => {
             });
         }
 
-        const { latitude, longitude, location } = req.body;
+        const { latitude, longitude, location, useProfileLocation = 'true' } = req.body;
+
+        // Get user's default location from profile
+        const user = await User.findById(req.user._id);
+        
+        let finalLocation = {
+            latitude: null,
+            longitude: null,
+            address: null
+        };
+
+        // Priority 1: Manual location override (if provided)
+        if (latitude && longitude) {
+            console.log('✅ Using manual location from upload');
+            finalLocation = {
+                latitude: parseFloat(latitude),
+                longitude: parseFloat(longitude),
+                address: location || null
+            };
+        } 
+        // Priority 2: User profile location (if useProfileLocation is true and available)
+        else if (useProfileLocation === 'true' && user?.location?.coordinates?.[0] !== 0) {
+            console.log('✅ Using profile default location');
+            finalLocation = {
+                latitude: user.location.coordinates[1], // MongoDB stores [longitude, latitude]
+                longitude: user.location.coordinates[0],
+                address: user.location.address || `${user.location.city || ''}, ${user.location.country || ''}`.trim()
+            };
+        } else {
+            console.log('⚠️ No location data available');
+        }
 
         // Create image analysis record
         const imageAnalysis = await ImageAnalysis.create({
@@ -72,11 +102,7 @@ router.post('/upload', auth, upload.single('image'), async (req, res, next) => {
                 mimetype: req.file.mimetype
             },
             metadata: {
-                location: {
-                    latitude: latitude ? parseFloat(latitude) : null,
-                    longitude: longitude ? parseFloat(longitude) : null,
-                    address: location
-                },
+                location: finalLocation,
                 deviceInfo: {
                     userAgent: req.get('User-Agent'),
                     timestamp: new Date()
@@ -88,15 +114,22 @@ router.post('/upload', auth, upload.single('image'), async (req, res, next) => {
             success: true,
             message: 'Image uploaded successfully',
             data: {
+                analysis: imageAnalysis,
                 analysisId: imageAnalysis._id,
                 imageUrl: imageAnalysis.originalImage.url,
-                status: imageAnalysis.status
+                status: imageAnalysis.status,
+                locationUsed: finalLocation.latitude ? 'provided' : 'not_available'
             }
         });
     } catch (error) {
+        // Clean up uploaded file if error occurs
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
         next(error);
     }
 });
+
 
 // @route   GET /api/images/analyses
 // @desc    Get user's image analyses

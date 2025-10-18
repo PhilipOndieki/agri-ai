@@ -327,6 +327,71 @@ router.post('/reset-password/:token', async (req, res, next) => {
     }
 });
 
+// @route   PUT /api/auth/profile/location
+// @desc    Update user's default location
+// @access  Private
+router.put('/profile/location', auth, async (req, res, next) => {
+    try {
+        const { latitude, longitude, address, city, state, country } = req.body;
+
+        if (!latitude || !longitude) {
+            return res.status(400).json({
+                success: false,
+                message: 'Latitude and longitude are required'
+            });
+        }
+
+        const user = await User.findById(req.user._id);
+
+        user.location = {
+            type: 'Point',
+            coordinates: [parseFloat(longitude), parseFloat(latitude)], // [lng, lat]
+            address: address || '',
+            city: city || '',
+            state: state || '',
+            country: country || ''
+        };
+
+        await user.save();
+
+        res.json({
+            success: true,
+            message: 'Location updated successfully',
+            data: { location: user.location }
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// @route   PUT /api/auth/profile
+// @desc    Update user profile
+// @access  Private
+router.put('/profile', auth, async (req, res, next) => {
+    try {
+        const { name, phone, farmSize } = req.body;
+
+        const user = await User.findById(req.user._id);
+
+        if (name) user.name = name;
+        if (phone) user.phone = phone;
+        if (farmSize) {
+            if (!user.profile) user.profile = {};
+            user.profile.farmSize = farmSize;
+        }
+
+        await user.save();
+
+        res.json({
+            success: true,
+            message: 'Profile updated successfully',
+            data: { user: user.getPublicProfile() }
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
 // @route   DELETE /api/auth/account
 // @desc    Delete account
 // @access  Private
