@@ -345,7 +345,7 @@ app.use((req, res) => {
         success: false,
         message: 'Route not found',
         path: req.originalUrl
-    });
+    }); 
 });
 
 // Error handling middleware (must be last)

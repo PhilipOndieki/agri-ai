@@ -100,7 +100,7 @@ router.post('/chat', auth, async (req, res, next) => {
 
         const { message, sessionId, language = 'en' } = req.body;
 
-        if (!message) {
+        if (!message || message.trim() === '') {
             console.log('❌ No message provided');
             return res.status(400).json({
                 success: false,
@@ -110,13 +110,17 @@ router.post('/chat', auth, async (req, res, next) => {
 
         // Find or create chat session
         let session;
-        if (sessionId) {
+        
+        // Only look for existing session if sessionId is a valid MongoDB ObjectId
+        if (sessionId && /^[0-9a-fA-F]{24}$/.test(sessionId)) {
             console.log('🔍 Looking for session:', sessionId);
             session = await ChatSession.findOne({
                 _id: sessionId,
                 user: req.user._id
             });
             console.log('📦 Found session:', session ? 'Yes' : 'No');
+        } else if (sessionId) {
+            console.log('⚠️ Invalid sessionId format, creating new session');
         }
         
         if (!session) {
@@ -131,14 +135,23 @@ router.post('/chat', auth, async (req, res, next) => {
             console.log('✅ New session created:', session._id);
         }
 
+        // Build conversation history BEFORE adding the new message
+        // Get the last 10 messages (excluding the current one we're about to add)
+        const previousMessages = session.messages.slice(-10);
+        
+        const history = previousMessages.map(msg => ({
+            role: msg.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: msg.content }]
+        }));
+
         // Add user message to session
         session.messages.push({
             role: 'user',
-            content: message,
+            content: message.trim(),
             timestamp: new Date()
         });
 
-        let botResponse;
+        let botResponse = '';
         let responseSource = 'gemini';
 
         try {
@@ -146,18 +159,12 @@ router.post('/chat', auth, async (req, res, next) => {
             if (genAI) {
                 console.log('🤖 Calling Google Gemini API...');
                 
-                const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+                const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
                 
-                // Build conversation history
-                const history = session.messages.slice(-10).map(msg => ({
-                    role: msg.role === 'assistant' ? 'model' : 'user',
-                    parts: [{ text: msg.content }]
-                }));
-
                 // Create system prompt
                 const systemPrompt = `You are an agricultural expert assistant. Provide helpful, accurate farming advice in ${language}. Be concise but informative (max 200 words). Focus on practical solutions that farmers can implement.`;
 
-                // Start chat with history
+                // Start chat with history (NOT including the message we just added)
                 const chat = model.startChat({
                     history: [
                         {
@@ -168,7 +175,7 @@ router.post('/chat', auth, async (req, res, next) => {
                             role: 'model',
                             parts: [{ text: 'Understood. I will provide practical farming advice.' }]
                         },
-                        ...history.slice(0, -1) // Exclude the last message we just added
+                        ...history
                     ],
                     generationConfig: {
                         maxOutputTokens: 300,
@@ -176,31 +183,48 @@ router.post('/chat', auth, async (req, res, next) => {
                     }
                 });
 
-                const result = await chat.sendMessage(message);
+                // Now send the current message
+                const result = await chat.sendMessage(message.trim());
                 const response = await result.response;
                 botResponse = response.text();
-                console.log('✅ Gemini response received');
+                
+                // Validate response is not empty
+                if (!botResponse || botResponse.trim() === '') {
+                    console.log('⚠️ Gemini returned empty response, using fallback');
+                    botResponse = getFallbackResponse(message);
+                    responseSource = 'local';
+                } else {
+                    console.log('✅ Gemini response received:', botResponse.substring(0, 100) + '...');
+                }
             } else {
                 console.log('⚠️ No Gemini API key, using fallback');
-                // Fallback to local knowledge base
                 botResponse = getFallbackResponse(message);
                 responseSource = 'local';
             }
         } catch (geminiError) {
             console.error('❌ Gemini error:', geminiError.message);
-            // Fallback to local knowledge base
+            console.error('Full error:', geminiError);
             botResponse = getFallbackResponse(message);
             responseSource = 'local';
         }
 
+        // Double-check botResponse is valid before saving
+        if (!botResponse || botResponse.trim() === '') {
+            console.error('❌ Bot response is empty, using default fallback');
+            botResponse = "I apologize, but I'm having trouble generating a response right now. Please try asking your question again.";
+            responseSource = 'local';
+        }
+
+        console.log('💬 Bot response to save:', botResponse.substring(0, 50) + '...');
+
         // Add bot response to session
         session.messages.push({
             role: 'assistant',
-            content: botResponse,
+            content: botResponse.trim(),
             timestamp: new Date(),
             metadata: {
                 source: responseSource,
-                model: responseSource === 'gemini' ? 'gemini-2.0-flash' : 'local-knowledge'
+                model: responseSource === 'gemini' ? 'gemini-2.5-flash' : 'local-knowledge'
             }
         });
 
@@ -210,7 +234,7 @@ router.post('/chat', auth, async (req, res, next) => {
         res.json({
             success: true,
             data: {
-                response: botResponse,
+                response: botResponse.trim(),
                 sessionId: session._id,
                 messageCount: session.messages.length,
                 responseSource
@@ -219,6 +243,7 @@ router.post('/chat', auth, async (req, res, next) => {
 
     } catch (error) {
         console.error('❌ Chat error:', error);
+        console.error('Stack trace:', error.stack);
         next(error);
     }
 });
